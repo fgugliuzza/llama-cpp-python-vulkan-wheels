@@ -1,4 +1,4 @@
-name: Build ROCm Wheels
+name: Build Vulkan Wheels
 
 on:
   workflow_dispatch:
@@ -20,9 +20,9 @@ permissions:
   contents: write
 
 jobs:
-  build_wheels_rocm:
-    name: ROCm Wheels
-    uses: ./.github/workflows/build-wheels-rocm-full.yml
+  build_wheels_vulkan:
+    name: Vulkan Wheels
+    uses: ./.github/workflows/build-wheels-vulkan-full.yml
     with:
       version: ${{ inputs.version }}
       config: 'rename:1'

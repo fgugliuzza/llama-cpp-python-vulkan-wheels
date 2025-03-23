@@ -1,4 +1,4 @@
-name: Build ROCm Wheels (don't run this one directly)
+name: Build Vulkan Wheels (don't run this one directly)
 
 on:
   workflow_dispatch:
@@ -57,19 +57,14 @@ jobs:
         id: set-matrix
         run: |
           $matrix = @{
-              'os' = 'ubuntu-20.04', 'windows-2019'
+              # 'os' = 'ubuntu-20.04', 'windows-2019'
+              'os' = 'ubuntu-20.04'
               'pyver' = "3.10", "3.11"
-              # 'rocm' = '6.1.2'
               'avx' = "AVX", "AVX2"
               'rename' = '0', '1'
-              'exclude' = @(
-                  @{'os' = 'windows-2019'}
-                  # @{'os' = 'windows-2019'},
-                  # @{'os' = 'windows-2019';'rocm' = '5.4.2'},
-                  # @{'os' = 'windows-2019';'rocm' = '5.5'},
-                  # @{'os' = 'windows-2019';'rocm' = '6.1.2'},
-                  # @{'os' = 'ubuntu-20.04';'rocm' = '5.5.1'}
-              )
+              #'exclude' = @(
+              #@{'os' = 'windows-2019'}
+              #)
           }
           
           if ($env:CONFIGIN -ne 'Default') {$env:CONFIGIN.split(';').foreach({$matrix[$_.split(':')[0]] = $_.split(':')[1].split(',')})}
@@ -84,7 +79,7 @@ jobs:
           Write-Output ('matrix=' + $matrixOut) >> $env:GITHUB_OUTPUT
           
   build_wheels:
-    name: Build ${{ matrix.os }} ${{ matrix.avx }} ROCm ${{ matrix.rocm }} ${{ matrix.rename == '1' && 'Textgen Wheel' || 'Wheel' }} ${{ matrix.pyver }}
+    name: Build ${{ matrix.os }} ${{ matrix.avx }} Vulkan ${{ matrix.vulkan }} ${{ matrix.rename == '1' && 'Textgen Wheel' || 'Wheel' }} ${{ matrix.pyver }}
     needs: define_matrix
     runs-on: ${{ matrix.os }}
     strategy:
@@ -94,8 +89,7 @@ jobs:
         shell: pwsh
     env:
       PCKGVER: ${{ inputs.version }}
-      # ROCM_VERSION: ${{ matrix.rocm }}
-      ROCM_VERSION: '6.1.2'
+      VULKAN_VERSION: '1.2.131'
       AVXVER: ${{ matrix.avx }}
 
     steps:
@@ -115,26 +109,13 @@ jobs:
           repository: 'abetlen/llama-cpp-python'
           ref: ${{ inputs.version }}
           submodules: 'recursive'
-          
-      - name: Install Linux ROCm SDK
+
+      - name: Install Linux Vulkan development files
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          [ ! -d /etc/apt/keyrings ] && sudo mkdir --parents --mode=0755 /etc/apt/keyrings
-          wget https://repo.radeon.com/rocm/rocm.gpg.key -O - | gpg --dearmor | sudo tee /etc/apt/keyrings/rocm.gpg > /dev/null
-          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/$ROCM_VERSION focal main" | sudo tee --append /etc/apt/sources.list.d/rocm.list
-          echo -e 'Package: *\nPin: release o=repo.radeon.com\nPin-Priority: 600' | sudo tee /etc/apt/preferences.d/rocm-pin-600
           sudo apt update
-          sudo apt install rocm-dev rocblas-dev hipblas-dev -y
-          
-      - name: Install Windows ROCm SDK
-        if: runner.os == 'Windows'
-        run: |
-          curl -LO https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-23.Q3-Win10-Win11-For-HIP.exe
-          Start-Process 'AMD-Software-PRO-Edition-23.Q3-Win10-Win11-For-HIP.exe' -ArgumentList '-install' -NoNewWindow -Wait
-          echo "C:\Program Files\AMD\ROCm\5.5\bin" >> $env:GITHUB_PATH
-          echo 'ROCM_PATH=C:\Program Files\AMD\ROCm\5.5' >> $env:GITHUB_ENV
-          echo 'HIP_PATH=C:\Program Files\AMD\ROCm\5.5' >> $env:GITHUB_ENV
+          sudo apt install libvulkan-dev -y
           
       - uses: actions/setup-python@v4
         with:
@@ -188,18 +169,9 @@ jobs:
       - name: Build Wheel
         run: |
           if ($IsLinux) {
-            $env:CC = '/opt/rocm/llvm/bin/clang'
-            $env:CXX = '/opt/rocm/llvm/bin/clang++'
             $env:CFLAGS = '-fPIC'
             $env:CXXFLAGS = '-fPIC'
-            $env:CMAKE_PREFIX_PATH = '/opt/rocm'
-            $env:GITHUB_PATH = "/opt/rocm/bin:$env:GITHUB_PATH"
-            $env:ROCM_PATH = "/opt/rocm"
-            $env:HIP_PATH = "/opt/rocm"
           } else {
-            $env:CC = 'C:\Program Files\AMD\ROCm\5.5\bin\clang.exe'
-            $env:CXX = 'C:\Program Files\AMD\ROCm\5.5\bin\clang++.exe'
-            $env:CMAKE_PREFIX_PATH = 'C:\Program Files\AMD\ROCm\5.5'
             $cmakelists = Get-Content 'CMakeLists.txt' -raw
             $regexstr = '(?s)(?<=\n)\s+?install\(\s+FILES \$\<TARGET_RUNTIME_DLLS.+/llama_cpp(?:_cuda)?\s+\)\s+?(?=endif\(\))'
             $regexmatch = [Regex]::Matches($cmakelists,$regexstr)
@@ -207,18 +179,15 @@ jobs:
           }
           $env:VERBOSE = '1'
           $packageVersion = [version]$env:PCKGVER.TrimStart('v')
-          
-          $gputargets = 'gfx803;gfx900;gfx906:xnack-;gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102'
-          if ([version]$env:ROCM_VERSION -lt [version]'5.5') {$gputargets = 'gfx803;gfx900;gfx906:xnack-;gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-;gfx1010;gfx1012;gfx1030'}
-          
-          if ($env:AVXVER -eq 'AVX') {$env:CMAKE_ARGS = "-GNinja -DGGML_HIPBLAS=ON -DGGML_AVX2=off -DGGML_FMA=off -DGGML_F16C=off -DGPU_TARGETS=$gputargets"}
-          if ($env:AVXVER -eq 'AVX512') {$env:CMAKE_ARGS = "-GNinja -DGGML_HIPBLAS=ON -DGGML_AVX512=on -DGPU_TARGETS=$gputargets"}
-          if ($env:AVXVER -eq 'basic') {$env:CMAKE_ARGS = "-GNinja -DGGML_HIPBLAS=ON -DGGML_AVX=off -DGGML_AVX2=off -DGGML_FMA=off -DGGML_F16C=off -DGPU_TARGETS=$gputargets"}
+           
+          if ($env:AVXVER -eq 'AVX') {$env:CMAKE_ARGS = "-GNinja -DGGML_VULKAN=on -DGGML_AVX2=off -DGGML_FMA=off -DGGML_F16C=off"}
+          if ($env:AVXVER -eq 'AVX512') {$env:CMAKE_ARGS = "-GNinja -DGGML_VULKAN=on -DGGML_AVX512=on"}
+          if ($env:AVXVER -eq 'basic') {$env:CMAKE_ARGS = "-GNinja -DGGML_VULKAN=on -DGGML_AVX=off -DGGML_AVX2=off -DGGML_FMA=off -DGGML_F16C=off"}
           if ($env:AVXVER -eq 'AVX2')
           {
-              $env:CMAKE_ARGS = "-GNinja -DGGML_HIPBLAS=ON -DGPU_TARGETS=$gputargets"
-              $buildtag = "+rocm$env:ROCM_VERSION"
-          } else {$buildtag = "+rocm$env:ROCM_VERSION$env:AVXVER"}
+              $env:CMAKE_ARGS = "-GNinja -DGGML_VULKAN=on"
+              $buildtag = "+vulkan$env:VULKAN_VERSION"
+          } else {$buildtag = "+vulkan$env:VULKAN_VERSION$env:AVXVER"}
           
           $env:CMAKE_ARGS = "-DLLAVA_BUILD=off $env:CMAKE_ARGS"
 
@@ -243,7 +212,7 @@ jobs:
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: ./dist/*.whl
-          tag: rocm
+          tag: vulkan
           file_glob: true
           make_latest: false
           overwrite: true
@@ -251,5 +220,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: steps.upload-release.outcome == 'failure'
         with:
-          name: 'rocm-wheels'
+          name: 'vulkan-wheels'
           path: ./dist/*.whl
